@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Usage Calculator</title>
+<style>
+:root{--bg:#f6f5f1;--card:#fff;--fg:#1c1b19;--mut:#77756e;--bd:#e7e4dc;--ac:#c4592f;--soft:#f3efe8;--warn:#b7791f}
+@media(prefers-color-scheme:dark){:root{--bg:#161513;--card:#1f1e1b;--fg:#ece9e2;--mut:#9a978d;--bd:#33312d;--ac:#e8895f;--soft:#2a2824;--warn:#e0b04a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+main{max-width:760px;margin:0 auto;padding:40px 16px 72px}
+h1{font-size:22px;font-weight:650;margin:0 0 4px;letter-spacing:-.01em}
+.sub{color:var(--mut);margin:0 0 24px}
+h2{font-size:16px;font-weight:650;margin:0 0 12px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:20px;margin-bottom:16px}
+.hero{display:grid;grid-template-columns:repeat(3,1fr);padding:0;overflow:hidden}
+.hero div{padding:18px 20px;border-right:1px solid var(--bd)}
+.hero div:last-child{border:0}
+.hero span{display:block;font-size:14px;color:var(--mut)}
+.hero b{font-size:28px;font-weight:650;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.hero em{display:block;font-style:normal;font-size:15px;color:var(--mut);font-variant-numeric:tabular-nums}
+.hero .main b{color:var(--ac)}
+@media(max-width:640px){.hero{grid-template-columns:1fr}.hero div{border:0;border-bottom:1px solid var(--bd)}}
+textarea{width:100%;min-height:140px;resize:vertical;font:14px/1.5 ui-monospace,Menlo,monospace;color:var(--fg);background:var(--soft);border:1px solid var(--bd);border-radius:8px;padding:12px}
+input,select{font:inherit;color:var(--fg);background:var(--soft);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;width:100%}
+:focus-visible{outline:2px solid var(--ac);outline-offset:1px}
+input[type=number]::-webkit-inner-spin-button{display:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}
+label{display:flex;flex-direction:column;gap:5px;font-size:14px;color:var(--mut)}
+.note{font-size:14px;color:var(--mut);margin:10px 0 0}
+.status{font-size:14px;margin:8px 0 0;min-height:20px;color:var(--mut)}.status.ok{color:#2f8f5b}.status.err{color:var(--warn)}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{padding:8px 6px;text-align:right;border-bottom:1px solid var(--bd);white-space:nowrap}
+tr:last-child td{border-bottom:0}
+th:first-child,td:first-child{text-align:left}
+th{font-size:14px;color:var(--mut);font-weight:500}
+tr.hl td{background:var(--soft)}
+.total td{font-weight:650}
+sup{font-size:12px;color:var(--mut)}
+.w{color:var(--warn)}
+ul,ol{margin:0;padding-left:20px;font-size:14px;color:var(--mut)}li{margin-bottom:5px}
+ol a{color:var(--mut);word-break:break-all}
+.link{color:var(--ac);cursor:pointer;text-decoration:underline}
+</style>
+</head>
+<body>
+<main>
+<h1>Claude usage calculator</h1>
+<p class="sub">What your usage would cost at API prices, and roughly what it costs Anthropic. Prices as of <span id="asof"></span>.</p>
+
+<section class="card hero">
+  <div class="main"><span>API-equivalent cost</span><b id="rApi">–</b><em id="mApi"></em></div>
+  <div><span>Cost to Anthropic, inference only (85% margin)<sup>[9]</sup></span><b id="rCost">–</b><em id="mCost"></em></div>
+  <div><span>Cost to Anthropic, incl. training (45% margin)<sup>[9]</sup></span><b id="rCost2">–</b><em id="mCost2"></em></div>
+</section>
+
+<section class="card">
+  <h2>Usage</h2>
+  <textarea id="paste" spellcheck="false" placeholder="Paste a /stats screenshot here, or text like:&#10;&#10;Sonnet 5.5&#10;In: 17.1k · Out: 8.0m&#10;Cache: 1.2b read · 31.2m write"></textarea>
+  <p class="note">Paste a screenshot of /stats (Cmd/Ctrl+V), drop it here, or <label style="display:inline;font-size:inherit;color:var(--ac);cursor:pointer;text-decoration:underline">choose a file<input type="file" id="file" accept="image/*" hidden></label>. Check the digits after.</p>
+  <p class="status" id="status"></p>
+</section>
+
+<section class="card">
+  <h2>Plan</h2>
+  <div class="grid">
+    <label>Plan<select id="plan"></select></label>
+    <label>Days of usage<input type="number" id="days" min="1" value="30"></label>
+    <label>Cache write TTL<select id="ttl"><option value="5m">5 minutes</option><option value="1h">1 hour</option></select></label>
+  </div>
+  <p class="note">Fee for the period: <b id="fee"></b><sup>[10]</sup></p>
+</section>
+
+<section class="card">
+  <h2>By model</h2>
+  <div class="tw"><table id="byModel"></table></div>
+</section>
+
+<section class="card">
+  <h2>Anthropic cost by margin scenario</h2>
+  <div class="tw"><table id="scen"></table></div>
+  <p class="note">Cost = API cost × (1 − margin). Shaded rows are from the S-1 reading; they are company-wide, not per-user. API value ÷ fee: <b id="apiFee"></b></p>
+</section>
+
+<section class="card">
+  <h2>Rates used (USD per 1M tokens)</h2>
+  <div class="tw"><table id="rates"></table></div>
+  <p class="note"><span class="w">Orange</span> = assumed, not confirmed.</p>
+</section>
+
+<section class="card">
+  <h2>Caveats</h2>
+  <ul>
+    <li>API cost is retail value, not what Anthropic pays.</li>
+    <li>Margins are company-wide averages; per-user cost could be lower.</li>
+    <li>Plan limits aren’t published, so this can’t say what a plan allows.</li>
+    <li>Extra usage and API credits aren’t subsidized; leave them out.</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Sources</h2>
+  <ol id="sources"></ol>
+</section>
+</main>
+
+<script>
+const CONFIG = {
+  pricesAsOf: "2026-11-09",
+  sources: [
+    ["Opus 5.5 pricing", "https://www.developersdigest.tech/models/claude-opus-5-5"],
+    ["Sonnet 5.5 pricing", "https://www.developersdigest.tech/models/claude-sonnet-5-5"],
+    ["Sonnet 5.5 rate card", "https://www.eesel.ai/blog/claude-sonnet-5-5-pricing"],
+    ["Sonnet 5.5 cache read cut to $0.10 (from 2026-10-07)", "https://smartscope.blog/en/blog/claude-sonnet-5-5-cache-read-price-cut-2026/"],
+    ["Opus 5.5 and Fable cache rates", "https://www.orcarouter.ai/blog/claude-opus-5-5-pricing"],
+    ["Opus 5.5 release", "https://thenewstack.io/?p=22837560"],
+    ["Gross margin forecast, The Information (Jan 2026)", "https://www.itiger.com/news/1154519858"],
+    ["SemiAnalysis inference margins", "https://cryptobriefing.com/anthropic-inference-margins-semianalysis-88-percent/"],
+    ["S-1 margin analysis (third-party reading)", "https://yage.ai/share/anthropic-s1-six-month-shelf-life-en-20261030.html"],
+    ["Plan prices and 30-day proration: from the spec, no source given", null],
+    ["Assumed rates (orange): cache read 10% of input, 5-min write 1.25×, 1-h write 2×. Haiku and legacy-Opus base rates have no source in the spec", null],
+    ["Low-mid margin (50%): a round figure between 40% and mid-60s, not published", null]
+  ],
+  plans: { "Pro": 20, "Max 5x": 100, "Max 20x": 200 },
+  // USD per 1M tokens: [input, output, cacheRead, write5m, write1h]; assume = indexes that are assumptions; refs = source numbers
+  models: {
+    "opus-5.5":   { name: "Opus 5.5",   rates: [4, 20, 0.20, 5, 8],              assume: [],      refs: [1,5,6] },
+    "sonnet-5.5": { name: "Sonnet 5.5", rates: [2, 10, 0.10, 2.5, 4],            assume: [],      refs: [2,3,4] },
+    "haiku-5.5":  { name: "Haiku 5.5",  rates: [0.10, 0.50, 0.01, 0.125, 0.20],  assume: [2,3,4], refs: [11] },
+    "fable-5.1":  { name: "Fable 5.1",  rates: [10, 50, 0.25, 12.5, 20],         assume: [3,4],   refs: [5,11] },
+    "opus-legacy":{ name: "Opus 5 / 4-series", rates: [5, 25, 0.50, 6.25, 10],  assume: [4],     refs: [11] }
+  },
+  margins: [
+    { label: "Low",           margin: 0.40,  basis: "2025 gross margin, paying users", refs: [7] },
+    { label: "Low-mid",       margin: 0.50,  basis: "Between 40% and mid-60s",         refs: [12] },
+    { label: "Overall gross margin", margin: 0.675, basis: "Mid-60s mid-2026 (65–70%)", refs: [8] },
+    { key: "inf", s1: true, label: "S-1: inference only", margin: 0.85,  basis: "Inference margin H1 2026, excl. training", refs: [9] },
+    { label: "Ceiling",       margin: 0.88,  basis: "Inference business estimate",     refs: [8] },
+    { key: "train", s1: true, label: "S-1: incl. training", margin: 0.45,  basis: "Compute gross margin incl. training", refs: [9] }
+  ]
+};
+
+const $ = id => document.getElementById(id);
+const keys = Object.keys(CONFIG.models);
+const usage = Object.fromEntries(keys.map(k => [k, [0,0,0,0]]));
+const usd = n => isFinite(n) ? "$" + n.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2}) : "–";
+const ratio = n => isFinite(n) ? n.toLocaleString("en-US", {maximumFractionDigits:1}) + "×" : "–";
+const refs = a => `<sup>[${a.join(", ")}]</sup>`;
+
+/* ---------- parsing /stats text ---------- */
+const UNIT = { k: 1e3, m: 1e6, b: 1e9, t: 1e12 };
+const toNum = (s, u) => parseFloat(s.replace(/,/g, "")) * (u ? UNIT[u.toLowerCase()] : 1);
+const N = "([\\d][\\d,]*\\.?\\d*)\\s*([kmbt])?(?![a-z])";
+function modelKey(name, ver) {
+  const n = name.toLowerCase();
+  if (n === "opus" && ver === "5.5") return "opus-5.5";
+  if (n === "sonnet" && ver === "5.5") return "sonnet-5.5";
+  if (n === "haiku" && ver === "5.5") return "haiku-5.5";
+  if (n === "fable" && ver === "5.1") return "fable-5.1";
+  return n === "opus" ? "opus-legacy" : null;
+}
+function parseUsage(text) {
+  const out = Object.fromEntries(keys.map(k => [k, [0,0,0,0]]));
+  const skipped = [];
+  text = text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/[  -​ ]/g, " ");
+  // A model header is "<Model> <ver>", optional "(xx%)", then "In:" (skips legend / Favorite lines)
+  const hdr = /(opus|sonnet|haiku|fable)\s+(\d+(?:\.\d+)?)\s*(?:\(\s*[\d.]+\s*%\s*\))?\s*(?=In\s*:)/gi;
+  const hits = [...text.matchAll(hdr)];
+  hits.forEach((h, i) => {
+    const block = text.slice(h.index + h[0].length, i + 1 < hits.length ? hits[i+1].index : undefined);
+    const key = modelKey(h[1], h[2]);
+    if (!key) { skipped.push(`${h[1]} ${h[2]}`); return; }
+    const grab = re => { const m = block.match(re); return m ? toNum(m[1], m[2]) : 0; };
+    [grab(new RegExp("\\bIn\\s*:\\s*" + N, "i")), grab(new RegExp("\\bOut\\s*:\\s*" + N, "i")),
+     grab(new RegExp(N + "\\s*read", "i")), grab(new RegExp(N + "\\s*write", "i"))]
+      .forEach((x, j) => out[key][j] += x);
+  });
+  return { out, found: hits.length, skipped };
+}
+function applyPaste() {
+  const txt = $("paste").value, st = $("status");
+  if (!txt.trim()) { setUsage({}); st.className = "status"; st.textContent = ""; return false; }
+  const r = parseUsage(txt);
+  setUsage(r.found ? r.out : {});
+  if (!r.found) { st.className = "status err"; st.textContent = "Couldn't find any model blocks (a model name followed by “In: … Out: …”)."; return false; }
+  const names = keys.filter(k => r.out[k].some(x => x > 0)).map(k => CONFIG.models[k].name);
+  st.className = "status ok";
+  st.textContent = `Read ${names.join(", ")}.` + (r.skipped.length ? ` Skipped unknown model: ${r.skipped.join(", ")}.` : "");
+  return true;
+}
+function setUsage(u) { keys.forEach(k => usage[k] = (u[k] || [0,0,0,0]).slice()); calc(); }
+
+/* ---------- calculation ---------- */
+function apiCost(k) {
+  const [i,o,cr,w5,w1] = CONFIG.models[k].rates, [ui,uo,ucr,ucw] = usage[k];
+  return (ui*i + uo*o + ucr*cr + ucw*($("ttl").value === "5m" ? w5 : w1)) / 1e6;
+}
+function calc() {
+  const days = Math.max(0, parseFloat($("days").value) || 0);
+  const fee = CONFIG.plans[$("plan").value] * days / 30;
+  $("fee").textContent = usd(fee);
+  window._fee = fee;
+  const per = keys.map(k => ({k, c: apiCost(k)}));
+  const api = per.reduce((s,x) => s + x.c, 0);
+  const m1 = CONFIG.margins.find(m => m.key === "inf"), m2 = CONFIG.margins.find(m => m.key === "train");
+  $("rApi").textContent = usd(api);
+  $("rCost").textContent = usd(api * (1 - m1.margin));
+  $("rCost2").textContent = usd(api * (1 - m2.margin));
+  const x = v => `${ratio(v / fee)} the plan fee`;
+  $("mApi").textContent = x(api);
+  $("mCost").textContent = x(api * (1 - m1.margin));
+  $("mCost2").textContent = x(api * (1 - m2.margin));
+  $("apiFee").textContent = ratio(api / fee);
+  const used = per.filter(x => x.c > 0);
+  $("byModel").innerHTML = `<tr><th>Model</th><th>API cost</th><th>Share</th></tr>` +
+    (used.length ? used.map(x => `<tr><td>${CONFIG.models[x.k].name}</td><td>${usd(x.c)}</td><td>${(x.c/api*100).toFixed(1)}%</td></tr>`).join("") +
+      `<tr class="total"><td>Total</td><td>${usd(api)}</td><td></td></tr>`
+      : `<tr><td colspan="3" style="color:var(--mut)">No usage yet.</td></tr>`);
+  $("scen").innerHTML = `<tr><th>Scenario</th><th>Margin</th><th>Anthropic cost</th><th>Cost ÷ fee</th><th>Source</th></tr>` +
+    CONFIG.margins.map(m => { const c = api * (1 - m.margin);
+      return `<tr class="${m.s1?'hl':''}"><td>${m.label}</td><td>${m.margin*100}%</td><td>${usd(c)}</td><td>${ratio(c/fee)}</td>` +
+      `<td>${refs(m.refs)}</td></tr>`; }).join("");
+}
+function buildStatic() {
+  $("asof").textContent = CONFIG.pricesAsOf;
+  $("plan").innerHTML = Object.entries(CONFIG.plans).map(([p,v]) => `<option value="${p}">${p} ($${v}/mo)</option>`).join("");
+  const cell = (v, a) => `<td${a ? ' class="w"' : ""}>${v}</td>`;
+  $("rates").innerHTML = `<tr><th>Model</th><th>Input</th><th>Output</th><th>Cache read</th><th>Write 5m</th><th>Write 1h</th><th>Source</th></tr>` +
+    keys.map(k => { const m = CONFIG.models[k];
+      return `<tr><td>${m.name}</td>${m.rates.map((v,j) => cell(v, m.assume.includes(j))).join("")}<td>${refs(m.refs)}</td></tr>`; }).join("");
+  $("sources").innerHTML = CONFIG.sources.map(([t,u]) => `<li>${t}${u ? `<br><a href="${u}" target="_blank" rel="noopener">${u}</a>` : ""}</li>`).join("");
+}
+
+/* ---------- screenshot input via in-browser OCR ---------- */
+let tessLoading = null;
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve();
+  return tessLoading || (tessLoading = new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
+    s.onload = res; s.onerror = () => { tessLoading = null; rej(new Error("couldn't load the OCR library (offline?)")); };
+    document.head.appendChild(s);
+  }));
+}
+async function prepImage(file) {  // upscale, greyscale, invert dark screenshots
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(3, Math.max(1, 2400 / bmp.width));
+  const c = document.createElement("canvas");
+  c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+  const g = c.getContext("2d", { willReadFrequently: true });
+  g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+  g.drawImage(bmp, 0, 0, c.width, c.height);
+  const d = g.getImageData(0, 0, c.width, c.height), p = d.data;
+  let sum = 0;
+  for (let i = 0; i < p.length; i += 4) { p[i] = p[i+1] = p[i+2] = .299*p[i] + .587*p[i+1] + .114*p[i+2]; sum += p[i]; }
+  if (sum / (p.length / 4) < 128) for (let i = 0; i < p.length; i += 4) p[i] = p[i+1] = p[i+2] = 255 - p[i];
+  g.putImageData(d, 0, 0);
+  return c;
+}
+async function readImage(file) {
+  const st = $("status");
+  st.className = "status"; st.textContent = "Reading screenshot… (the first time downloads the OCR engine, ~10 MB)";
+  try {
+    await loadTesseract();
+    const { data } = await Tesseract.recognize(await prepImage(file), "eng");
+    $("paste").value = data.text;
+    const ok = applyPaste();
+    if (ok) st.textContent += " Read from screenshot, so check the digits.";
+  } catch (e) { st.className = "status err"; st.textContent = "Screenshot read failed: " + e.message; }
+}
+const imgFrom = files => [...(files || [])].find(f => f.type.startsWith("image/"));
+document.addEventListener("paste", e => { const f = imgFrom(e.clipboardData && e.clipboardData.files); if (f) { e.preventDefault(); readImage(f); } });
+$("paste").addEventListener("dragover", e => e.preventDefault());
+$("paste").addEventListener("drop", e => { const f = imgFrom(e.dataTransfer.files); if (f) { e.preventDefault(); readImage(f); } });
+$("file").addEventListener("change", e => { const f = imgFrom(e.target.files); if (f) readImage(f); e.target.value = ""; });
+
+buildStatic();
+$("paste").addEventListener("input", applyPaste);
+["plan","days","ttl"].forEach(id => $(id).addEventListener("input", calc));
+$("plan").value = "Pro";
+$("paste").value = `Sonnet 5.5 (51.4%)
+In: 17.1k · Out: 8.0m
+Cache: 1.2b read · 31.2m write
+Opus 5.5 (47.5%)
+In: 10.7k · Out: 5.9m
+Cache: 1.1b read · 28.3m write
+Haiku 5.5 (1.1%)
+In: 608 · Out: 176.8k
+Cache: 23.2m read · 1.6m write`;
+applyPaste();
+</script>
+</body>
+</html>
